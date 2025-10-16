@@ -36,6 +36,17 @@ export const WorksheetTable = ({ data, onDataChange }: WorksheetTableProps) => {
       .toFixed(2);
   };
 
+  const calculateBalanceSheetTotal = () => {
+    if (!autoCalculate) return '';
+    const liabilitiesTotal = liabilities
+      .filter(row => !row.label.toLowerCase().includes('total'))
+      .reduce((sum, row) => sum + (parseFloat(row.value) || 0), 0);
+    const equityTotal = equity
+      .filter(row => !row.label.toLowerCase().includes('total'))
+      .reduce((sum, row) => sum + (parseFloat(row.value) || 0), 0);
+    return (liabilitiesTotal + equityTotal).toFixed(2);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -101,7 +112,13 @@ export const WorksheetTable = ({ data, onDataChange }: WorksheetTableProps) => {
             </div>
             {equity.map((row, idx) => {
               const isTotal = row.label.toLowerCase().includes('total');
-              const value = isTotal && autoCalculate ? calculateTotal(equity) : row.value;
+              const isCombinedTotal = isTotal && (
+                row.label.toLowerCase().includes('liabilit') || 
+                row.label.toLowerCase().includes('balance')
+              );
+              const value = isTotal && autoCalculate 
+                ? (isCombinedTotal ? calculateBalanceSheetTotal() : calculateTotal(equity))
+                : row.value;
               
               return (
                 <div key={idx} className="space-y-1">
