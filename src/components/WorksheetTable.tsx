@@ -7,7 +7,8 @@ import { Switch } from '@/components/ui/switch';
 export interface TableRow {
   label: string;
   value: string;
-  category: 'assets' | 'liabilities' | 'equity';
+  category: string;
+  indentLevel?: number;
 }
 
 interface WorksheetTableProps {
@@ -24,9 +25,12 @@ export const WorksheetTable = ({ data, onDataChange }: WorksheetTableProps) => {
     onDataChange(newData);
   };
 
-  const assets = data.filter(row => row.category === 'assets');
-  const liabilities = data.filter(row => row.category === 'liabilities');
-  const equity = data.filter(row => row.category === 'equity');
+  // Group data by category dynamically
+  const categories = Array.from(new Set(data.map(row => row.category)));
+  const groupedData = categories.map(category => ({
+    name: category,
+    rows: data.filter(row => row.category === category)
+  }));
 
   const calculateTotal = (rows: TableRow[]) => {
     if (!autoCalculate) return '';
@@ -34,17 +38,6 @@ export const WorksheetTable = ({ data, onDataChange }: WorksheetTableProps) => {
       .filter(row => !row.label.toLowerCase().includes('total'))
       .reduce((sum, row) => sum + (parseFloat(row.value) || 0), 0)
       .toFixed(2);
-  };
-
-  const calculateBalanceSheetTotal = () => {
-    if (!autoCalculate) return '';
-    const liabilitiesTotal = liabilities
-      .filter(row => !row.label.toLowerCase().includes('total'))
-      .reduce((sum, row) => sum + (parseFloat(row.value) || 0), 0);
-    const equityTotal = equity
-      .filter(row => !row.label.toLowerCase().includes('total'))
-      .reduce((sum, row) => sum + (parseFloat(row.value) || 0), 0);
-    return (liabilitiesTotal + equityTotal).toFixed(2);
   };
 
   return (
@@ -63,78 +56,40 @@ export const WorksheetTable = ({ data, onDataChange }: WorksheetTableProps) => {
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Assets Section */}
-        <Card className="p-6 space-y-4">
-          <div className="pb-2 border-b-2 border-primary">
-            <h3 className="text-xl font-bold text-primary">ASSETS</h3>
-          </div>
-          {assets.map((row, idx) => {
-            const isTotal = row.label.toLowerCase().includes('total');
-            const value = isTotal && autoCalculate ? calculateTotal(assets) : row.value;
-            
-            return (
-              <div key={idx} className="space-y-1">
-                <Label className="text-sm font-medium">{row.label}</Label>
-                <Input
-                  type="text"
-                  value={value}
-                  onChange={(e) => updateValue(data.indexOf(row), e.target.value)}
-                  className={isTotal ? 'font-bold border-t-2 border-primary' : ''}
-                  disabled={isTotal && autoCalculate}
-                />
-              </div>
-            );
-          })}
-        </Card>
-
-        {/* Liabilities and Equity Section */}
-        <div className="space-y-6">
-          <Card className="p-6 space-y-4">
-            <div className="pb-2 border-b-2 border-destructive">
-              <h3 className="text-xl font-bold text-destructive">LIABILITIES</h3>
+      <div className="grid gap-6">
+        {groupedData.map((group, groupIdx) => (
+          <Card key={groupIdx} className="p-6 space-y-4">
+            <div className="pb-2 border-b-2 border-primary">
+              <h3 className="text-xl font-bold">{group.name}</h3>
             </div>
-            {liabilities.map((row, idx) => (
-              <div key={idx} className="space-y-1">
-                <Label className="text-sm font-medium">{row.label}</Label>
-                <Input
-                  type="text"
-                  value={row.value}
-                  onChange={(e) => updateValue(data.indexOf(row), e.target.value)}
-                />
-              </div>
-            ))}
-          </Card>
-
-          <Card className="p-6 space-y-4">
-            <div className="pb-2 border-b-2 border-accent">
-              <h3 className="text-xl font-bold">OWNER'S EQUITY</h3>
-            </div>
-            {equity.map((row, idx) => {
+            {group.rows.map((row, idx) => {
               const isTotal = row.label.toLowerCase().includes('total');
-              const isCombinedTotal = isTotal && (
-                row.label.toLowerCase().includes('liabilit') || 
-                row.label.toLowerCase().includes('balance')
-              );
               const value = isTotal && autoCalculate 
-                ? (isCombinedTotal ? calculateBalanceSheetTotal() : calculateTotal(equity))
+                ? calculateTotal(group.rows)
                 : row.value;
+              
+              const indentPadding = (row.indentLevel || 0) * 1.5;
               
               return (
                 <div key={idx} className="space-y-1">
-                  <Label className="text-sm font-medium">{row.label}</Label>
+                  <Label 
+                    className="text-sm font-medium" 
+                    style={{ paddingLeft: `${indentPadding}rem` }}
+                  >
+                    {row.label}
+                  </Label>
                   <Input
                     type="text"
                     value={value}
                     onChange={(e) => updateValue(data.indexOf(row), e.target.value)}
-                    className={isTotal ? 'font-bold border-t-2 border-foreground' : ''}
+                    className={isTotal ? 'font-bold border-t-2 border-primary' : ''}
                     disabled={isTotal && autoCalculate}
                   />
                 </div>
               );
             })}
           </Card>
-        </div>
+        ))}
       </div>
     </div>
   );

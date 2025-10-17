@@ -1,6 +1,5 @@
 import Tesseract from 'tesseract.js';
 import { TableRow } from '@/components/WorksheetTable';
-import { extract, token_set_ratio } from 'fuzzball';
 
 // Preprocess image for better OCR accuracy
 const preprocessImage = async (file: File): Promise<string> => {
@@ -78,104 +77,73 @@ export const processImageWithOCR = async (
   }
 };
 
-// Known field names for fuzzy matching
-const KNOWN_FIELDS = {
-  assets: [
-    'CASH',
-    'INVENTORY',
-    'ACCOUNTS RECEIVABLE',
-    'SUPPLIES',
-    'EQUIPMENT',
-    'TOTAL ASSETS'
-  ],
-  liabilities: [
-    'NOTES PAYABLE',
-    'ACCOUNTS PAYABLE',
-    'TOTAL LIABILITIES'
-  ],
-  equity: [
-    'ORIGINAL INVESTMENT',
-    'CAPITAL',
-    'EARNINGS WEEK TO DATE',
-    'NET INCOME',
-    'DRAWINGS',
-    'TOTAL LIABILITIES & OWNERS EQUITY',
-    'TOTAL EQUITY'
-  ]
-};
-
-const fuzzyMatchField = (text: string): { match: string; category: 'assets' | 'liabilities' | 'equity' } | null => {
-  const cleanText = text.toUpperCase().replace(/[^A-Z\s]/g, '');
+// Detect if a line is a section header
+const isSectionHeader = (line: string): boolean => {
+  const upper = line.toUpperCase();
+  const trimmed = line.trim();
   
-  // Try to match against known fields using fuzzy matching
-  for (const [category, fields] of Object.entries(KNOWN_FIELDS)) {
-    const matches = extract(cleanText, fields, { scorer: token_set_ratio, limit: 1 });
-    if (matches.length > 0 && matches[0][1] > 60) { // 60% match threshold
-      return { 
-        match: matches[0][0], 
-        category: category as 'assets' | 'liabilities' | 'equity' 
-      };
-    }
-  }
+  // Section headers are usually:
+  // - All caps or mostly caps
+  // - Shorter than 50 characters
+  // - Don't start with numbers or bullet points
+  // - May contain keywords like STATEMENT, TOTAL, PROFIT, etc.
   
-  return null;
+  const hasNoNumbers = !/^\d/.test(trimmed);
+  const isShortEnough = trimmed.length < 50;
+  const hasMostlyCaps = (upper.match(/[A-Z]/g) || []).length > trimmed.length * 0.5;
+  
+  const keywords = ['STATEMENT', 'ASSETS', 'LIABILITIES', 'EQUITY', 'SALES', 'EXPENSES', 
+                   'PROFIT', 'REVENUE', 'INCOME', 'COST', 'OWNER'];
+  const hasKeyword = keywords.some(k => upper.includes(k));
+  
+  return hasNoNumbers && isShortEnough && (hasMostlyCaps || hasKeyword);
 };
 
 const parseWorksheetText = (text: string): TableRow[] => {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   const rows: TableRow[] = [];
-  let currentCategory: 'assets' | 'liabilities' | 'equity' = 'assets';
+  let currentCategory = 'Uncategorized';
+  let indentLevel = 0;
 
   for (const line of lines) {
-    const lowerLine = line.toLowerCase();
+    // Skip very short lines, lines with only numbers, or lines with only symbols
+    if (line.length < 2 || /^[\d\.\s]+$/.test(line) || /^[^\w\s]+$/.test(line)) continue;
 
-    // Detect section headers with fuzzy matching
-    if (lowerLine.includes('asset') || /ass[e3]t/i.test(line)) {
-      currentCategory = 'assets';
-      continue;
-    } else if (lowerLine.includes('liabilit') || /liabilit/i.test(line)) {
-      currentCategory = 'liabilities';
-      continue;
-    } else if (lowerLine.includes('equity') || lowerLine.includes('owner')) {
-      currentCategory = 'equity';
+    // Check if this is a section header
+    if (isSectionHeader(line)) {
+      currentCategory = formatLabel(line);
+      indentLevel = 0;
       continue;
     }
 
-    // Skip very short lines or lines with only numbers
-    if (line.length < 3 || /^\d+$/.test(line)) continue;
+    // Detect indentation level (approximation based on leading spaces or special chars)
+    const leadingSpaces = line.match(/^[\s\-\+\•\*]*/)?.[0].length || 0;
+    indentLevel = Math.floor(leadingSpaces / 2);
 
-    // Try fuzzy matching first
-    const fuzzyMatch = fuzzyMatchField(line);
-    if (fuzzyMatch) {
-      const valueMatch = line.match(/(\d+(?:\.\d+)?)/);
-      rows.push({
-        label: fuzzyMatch.match,
-        value: valueMatch ? valueMatch[1] : '',
-        category: fuzzyMatch.category,
-      });
-      continue;
-    }
+    // Extract label and value
+    // Try to find numbers at the end of the line
+    const valueMatch = line.match(/\$?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*$/);
+    const label = valueMatch 
+      ? line.substring(0, line.lastIndexOf(valueMatch[0])).trim()
+      : line;
+    const value = valueMatch ? valueMatch[1].replace(/,/g, '') : '';
 
-    // Fallback: Try to extract label and value
-    const match = line.match(/^(.+?)(?:\s+(\d+(?:\.\d+)?))?$/);
+    // Clean and format the label
+    const cleanLabel = formatLabel(label);
     
-    if (match) {
-      const label = match[1].trim();
-      const value = match[2] || '';
+    // Skip if label is too short or generic
+    if (cleanLabel.length < 2) continue;
 
-      // Skip if it's likely a header or too generic
-      if (label.length > 2 && !lowerLine.includes('table')) {
-        rows.push({
-          label: formatLabel(label),
-          value,
-          category: currentCategory,
-        });
-      }
-    }
+    rows.push({
+      label: cleanLabel,
+      value,
+      category: currentCategory,
+      indentLevel,
+    });
   }
 
-  // If no data was extracted or very little, provide default structure
-  if (rows.length < 3) {
+  // If no data was extracted, provide a minimal default
+  if (rows.length === 0) {
     return getDefaultStructure();
   }
 
@@ -193,12 +161,8 @@ const formatLabel = (label: string): string => {
 
 const getDefaultStructure = (): TableRow[] => {
   return [
-    { label: 'CASH', value: '', category: 'assets' },
-    { label: 'INVENTORY', value: '', category: 'assets' },
-    { label: 'TOTAL ASSETS', value: '', category: 'assets' },
-    { label: 'NOTES PAYABLE', value: '', category: 'liabilities' },
-    { label: 'ORIGINAL INVESTMENT', value: '', category: 'equity' },
-    { label: 'EARNINGS WEEK TO DATE', value: '', category: 'equity' },
-    { label: 'TOTAL LIABILITIES & OWNERS EQUITY', value: '', category: 'equity' },
+    { label: 'Item 1', value: '', category: 'Section 1', indentLevel: 0 },
+    { label: 'Item 2', value: '', category: 'Section 1', indentLevel: 0 },
+    { label: 'Item 3', value: '', category: 'Section 2', indentLevel: 0 },
   ];
 };
